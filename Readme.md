@@ -10,7 +10,7 @@ This conversion uses the following EV components:
 - Tesla Model 3 Power Conversion System (PCS) for charging + DCDC conversion
 - Dilithium distributed BMS
 - IVT-S current + voltage sensor
-- (future) BMW i3 CCS charger
+- (future) Foccci CCS Charger
 - (potential) Bosch iBooster?
 
 ## Theory of Operation
