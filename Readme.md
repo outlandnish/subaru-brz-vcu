@@ -75,9 +75,8 @@ The following are repurposes signals whose ground path is controlled by low-side
 ### Inputs
 - ADC for resistor network on Cruise Control Switch
 - ADC for VPA, VPA2 (accelerator pedal signals)
-- 12V input AC high side pressure switch (ACP), clutch switch (CSW), stop light switch (ST1-, A3 - normally closed, A7 - normally open), ignition switch (IGSW), neutral switch (NSW)
+- 12V input AC high side pressure switch (ACP), clutch switch (CSW), stop light switch (ST1-, A3 - normally closed, A7 - normally open), ignition switch (IGSW), neutral switch (NSW), starter switch (STSW2)
 - 5V to 3.3V logic level converter for IMO (in case IMO is a digital signal instead of a 0/1)
-- 5V input? STSW
 - ADC 0.8V-1.8V ADC input for E.F.I Water Temperature Sensor
 
 ## Signals
@@ -101,7 +100,7 @@ The following are repurposes signals whose ground path is controlled by low-side
 - E02 is also GND (tbd why it's used)
 - ETCS +BM rail provides an additional 15A power source (previously used for the electronic throttle control). A new ground path is needed in the ECM
 - STSW2 provides a 7.5A power source for the ST relay
-- +B (A2) is powered by a 7.5A power source (EFI +B)
+- Permanent 12V +B (A2) is powered by a 7.5A power source (EFI +B)
 - EFI Main1 provides 15A to Purge VSV (controlled by PRG), #1, #2, #3, #4 fuel injectors, EV2+, EV1+, VV2+, VV1+ VVT sensors. They all have a sensor power provided by the VCV pin of the ECM. VCV power looks to be provided by the 15V ETCS relay mentioned above
 - Stop Light Switch Assembly + Clutch Switch Assembly route conditionally switched 10A power from ECU IG2 (most likely to also power brake lights)
 - EFI Main2 provides 15A of power from EFI(HTR) to the heated O2 sensors. This could be another option for sensor power sources in the engine bay.
@@ -112,6 +111,44 @@ The following are repurposes signals whose ground path is controlled by low-side
 
 ## To Do:
 - investigate where the Canister Pump Module is + the VPMP, MPMP, PPMP controls. +B for the canister pump module is controlled the +B and +B2 rails of the ECM (could be an option for the Ingenext controller)
-- See why there are E01, E02, E03, E04, and E05 grounds. Are they all connected to each other?
+- figure out whst to do with the Ingenext relays
 
+## Components required
+- 3x CAN transcievers (SN65HVD230 or similar)
+- 1x LIN transciever (SN65HVDA195 or TJA1020)
+- 1x TPL transciever (MC33664)
+- 1x ST L9800 for low-side relay control (BRZ electronics + pre-charge relay), 1x ST L9026 for high + low side relay control (or use two L9026 in daisy chain mode)
+- 1x DRV8703-Q1 for HV contactor control
 
+## I/O pins required
+- 3x CAN (6 pins)
+- 2x SPI for TPL (8 I/O), 1x SPI for 2x L9800 + 1x DRV8703 (3 pins SPI + 3 CS) (14 pins)
+- 1x USART for LIN (2 pins)
+- 1 pins ADC for cruise control, 2 pins analog for accelerator pedal, 1 pin for 5V ref, 1 pin for water temp sensor, 1 pin for oil temp sensor (6 pins)
+- 6 pins 12V digital I/O (6 pins)
+- 1 pin for for logic level translator for IMO (1 pin)
+- 1 pin for IGSW and 1 pin for STSW (2 pins)
+- 1 pin for PWM signal for tachometer (1 pin)
+- 1 pin for enabling VC output (1 pin) (enable pin of a 5V regulator?)
+- 1 pin for HV interlock?
+- 2 pins for NO / NC brake switch to DI / FPC for Tesla inverter
+- 3 pins optional I/O for VPMP, MPMP, and PPMP? (Tesla inverter accelerator pedal signals most likely)
+
+## Ingenext controller requirements
+- Permanent 12V
+- Switched 12V
+- Ground
+- 5V + Signal Ground for Accelerator Pedals, Signals for Accelerator Pedals
+- NO brake switch and NC brake switch
+- CANH / CANL
+- HVIL output / return
+
+## Available pins in the rear of the car
+Fuel Pump Control ECU Assembly, No. 2 Fuel Sender Gage Assembly, Fuel Sender Gage Assembly, and Canister Pump Module can all be utilized.
+
+- ECM DI and FPC to Fuel Pump Control ECU Assembly (G12). Includes +B controlled by C/OPEN Relay and a chassis ground (G1). Has output pins FP- and FP+ that connect to the Fuel Pump (G7)
+- Fuel Pump FS- from Combination Meter, FS- to Fuel Sender Gage Assembly, FS+ from Fuel Sender Gage Assembly to No. 2 Fuel Sender Gage Assembly with L output to Combination Meter
+- ECM VPMP, MPMP, and PPMP to Canister Pump Module. +B from ETCS Relay controlled by ECM +BM line
+
+## Accelerator Pedal Notes
+- Need 0-3.3V to 0-5V Op-Amp with 1.5x gain
