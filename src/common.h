@@ -1,5 +1,14 @@
 #pragma once
+
+#ifdef ARDUINO_ARCH_STM32
 #include <STM32FreeRTOS.h>
+#elif defined(ESP32)
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
+#else
+#include <FreeRTOS.h>
+#include <semphr.h>
+#endif
 
 static SemaphoreHandle_t spi_lock = xSemaphoreCreateMutex();
 

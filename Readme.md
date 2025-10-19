@@ -27,11 +27,11 @@ Permanent 12V is provided to the ECM via `A2`. The 12V is stepped down to both 5
   - The certification ECU activates IG1D and IG2D. IG2D activates the IG1 No. 3 Relay (for A/C) and activates the IG1 No. 4 Relay for Seat Heaters. IG1D activates the IG2 Relay which controls power to ECU IG2, the gauge cluster, IG2, and A/B Main off of the 30A IG2 Main fuse. The IG2 Relay also activates the IGS relay (which is one half of the ST CUT relay)
 2. When the starter switch is pressed to "start the engine", the following occurs:
   - The certification ECU checks the clutch switch to ensure it is not pressed. The clutch switch also activates one side of the ST Relay.
-  - The certification ECU checks to ensure the key is present and does something with the IMO line that connects to the main ECU. If this check fails, something else happens on the IMO line (need to investigate).
+  - The certification ECU checks to ensure the key is present and sends a challenge via the IMO line to the main ECU. The ECU responds on this line back to the certification ECU (need to investigate).
   - If everything is good, the certification ECU sends the STSW signal to the ECM on `A17`
   - The ECM activates the ACCR line to request accessory power cutoff using pin `C32`. 
   - The ECM sends out the STA signal on pin `C26`
-  - When the ECM sees the engine RPM (in an ICE car), it sends out a tachometer (solid or PWM?) on `C15` to the certification ECM and also sends out the STAR signal on `C34` to activate the ST CUT relay. (need to investigate - does this signal come from the certification ECU originally when tachometer signal gets sent to it?). The engine turns off the STA signal on `C26`
+  - When the ECM sees the engine RPM (in an ICE car), it sends out a tachometer (12V PWM) on `C15` to the certification ECM and also sends out the STAR signal on `C34` to activate the ST CUT relay. (need to investigate - does this signal come from the certification ECU originally when tachometer signal gets sent to it?). The engine turns off the STA signal on `C26`
   - The ECM deactivates the ACCR line
 3. When the starter switch is pressed to the off position, the following occurs:
   - The certification ECU deactivates IG1D and IG2D and deactivates the ACCR (and STSW?) signals
