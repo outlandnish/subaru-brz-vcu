@@ -1,8 +1,6 @@
 #include <Arduino.h>
 #include "STM32_PWM.h"
 #include "SPI.h"
-#include "l9966.h"
-#include "l9026.h"
 #include "common.h"
 #include "main.h"
 
@@ -136,6 +134,62 @@ bool getBrakeSwitchState() {
   return (!nc_state) || no_state;
 }
 
+// Input event system (hardware interrupt-based)
+static InputEventCallback input_callbacks[16] = {nullptr};  // Callbacks for channels 0-15
+static uint16_t last_input_state = 0;
+
+void registerInputCallback(uint8_t channel, InputEventCallback callback) {
+  if (channel >= 1 && channel <= 15) {
+    input_callbacks[channel] = callback;
+  }
+}
+
+// Master interrupt handler - called from L9966 ISR when any watched channel changes
+void onInputInterrupt(uint16_t wake_sources) {
+  // Read current state of all inputs
+  L9966_DigitalInputStatus status = l9966.getDigitalInputStatus();
+  uint16_t current_state = status.channel_states;
+
+  // Detect which channels actually changed
+  uint16_t changes = current_state ^ last_input_state;
+
+  if (changes) {
+    // Process each changed channel
+    for (uint8_t ch = 1; ch <= 15; ch++) {
+      uint16_t mask = 1 << (ch - 1);
+      if (changes & mask) {
+        // Channel changed - call callback if registered
+        bool new_state = (current_state & mask) != 0;
+        if (input_callbacks[ch]) {
+          input_callbacks[ch](ch, new_state);
+        }
+      }
+    }
+    last_input_state = current_state;
+  }
+}
+
+void initInputMonitoring() {
+  // Read initial state for change detection
+  L9966_DigitalInputStatus status = l9966.getDigitalInputStatus();
+  last_input_state = status.channel_states;
+
+  // Set up interrupt callback
+  l9966.setInterruptCallback(onInputInterrupt);
+
+  // Enable hardware interrupts for digital input channels
+  // Bits set for channels we want to monitor: 1, 4, 5, 7, 10, 11
+  uint16_t interrupt_mask = 0;
+  interrupt_mask |= (1 << (INPUT_CRUISE_CONTROL - 1));     // Channel 1
+  interrupt_mask |= (1 << (INPUT_CLUTCH_SWITCH - 1));      // Channel 4
+  interrupt_mask |= (1 << (INPUT_AC_PRESSURE_SWITCH - 1)); // Channel 5
+  interrupt_mask |= (1 << (INPUT_DLC_DIAGNOSTIC - 1));     // Channel 7
+  interrupt_mask |= (1 << (INPUT_BRAKE_SWITCH_NC - 1));    // Channel 10
+  interrupt_mask |= (1 << (INPUT_BRAKE_SWITCH_NO - 1));    // Channel 11
+
+  l9966.enableInterrupts(interrupt_mask);
+}
+
 // Analog input functions
 AccelPedalReading getAccelPedalPosition() {
   AccelPedalReading reading;
@@ -185,6 +239,68 @@ float getOilTemp() {
   // This is a placeholder - you'll need the actual thermistor curve for your sensor
   // For now, return raw value
   return raw_resistance;
+}
+
+// FreeRTOS Tasks
+void taskAccelPedalMonitor(void *pvParameters) {
+  (void) pvParameters;
+
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+  const TickType_t xFrequency = pdMS_TO_TICKS(20);  // Run every 20ms (50Hz)
+
+  for (;;) {
+    // Read accelerator pedal position
+    AccelPedalReading pedal = getAccelPedalPosition();
+
+    // Check if reading is valid
+    if (pedal.valid) {
+      // Store or use the pedal position
+      // You can add logic here to update throttle, trigger events, etc.
+
+      // Example: Log significant changes (optional)
+      static float last_position = 0;
+      if (abs(pedal.position_percent - last_position) > 5.0f) {
+        Serial.print("Accel Pedal: ");
+        Serial.print(pedal.position_percent, 1);
+        Serial.println("%");
+        last_position = pedal.position_percent;
+      }
+    } else {
+      // Pedal sensors disagree - fault condition
+      Serial.println("WARNING: Accelerator pedal sensor mismatch!");
+      // Handle fault (e.g., set pedal to 0%, trigger limp mode)
+    }
+
+    // Wait for next cycle
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+  }
+}
+
+// Example: Callback functions for input events
+void onClutchChanged(uint8_t channel, bool state) {
+  Serial.print("Clutch switch: ");
+  Serial.println(state ? "PRESSED" : "RELEASED");
+
+  // Example: Prevent starter engagement if clutch not pressed
+  if (!state) {
+    setStarterRelay(false);
+  }
+}
+
+void onBrakeChanged(uint8_t channel, bool state) {
+  Serial.print("Brake switch changed (channel ");
+  Serial.print(channel);
+  Serial.print("): ");
+  Serial.println(state ? "HIGH" : "LOW");
+}
+
+void onDiagnosticModeChanged(uint8_t channel, bool state) {
+  if (!state) {  // Grounded = diagnostic mode
+    Serial.println("DIAGNOSTIC MODE ACTIVATED");
+    // Enter diagnostic mode logic here
+  } else {
+    Serial.println("Normal mode");
+  }
 }
 
 void setup() {
@@ -415,14 +531,44 @@ void setup() {
 
   Serial.println("L9966 input channels configured");
 
-  // setup CAN buses
+  // Register input event callbacks
+  Serial.println("Registering input event callbacks...");
+  registerInputCallback(INPUT_CLUTCH_SWITCH, onClutchChanged);
+  registerInputCallback(INPUT_BRAKE_SWITCH_NC, onBrakeChanged);
+  registerInputCallback(INPUT_BRAKE_SWITCH_NO, onBrakeChanged);
+  registerInputCallback(INPUT_DLC_DIAGNOSTIC, onDiagnosticModeChanged);
 
+  // Initialize hardware interrupt-based input monitoring
+  Serial.println("Initializing hardware interrupts for input monitoring...");
+  initInputMonitoring();
+
+  // Create FreeRTOS tasks
+  Serial.println("Creating FreeRTOS tasks...");
+
+  // Accelerator pedal monitor task - Priority 3 (safety critical)
+  xTaskCreate(
+    taskAccelPedalMonitor,  // Task function
+    "AccelPedal",           // Task name
+    2048,                   // Stack size (bytes)
+    NULL,                   // Parameters
+    3,                      // Priority (highest for safety-critical sensor)
+    NULL                    // Task handle
+  );
+
+  Serial.println("FreeRTOS task created!");
+  Serial.println("Starting scheduler...");
+
+  // Start FreeRTOS scheduler
+  vTaskStartScheduler();
+
+  // Should never reach here
+  Serial.println("ERROR: Scheduler failed to start!");
+  while(1);
 }
 
 void loop() {
-  // digitalWrite(INPUT_RESET, HIGH);
-  // delay(1000);
-  // digitalWrite(INPUT_RESET, LOW);
+  // FreeRTOS scheduler is running, this loop() should never execute
+  // If we reach here, something went wrong with the scheduler
+  Serial.println("ERROR: loop() should not be executing!");
   delay(1000);
-  Serial.println("Hello World");
 }

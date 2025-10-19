@@ -2,6 +2,7 @@
 
 #include "Arduino.h"
 #include "l9026.h"
+#include "l9966.h"
 
 // Relay output definitions
 // Device 0 outputs
@@ -58,6 +59,15 @@
 // External references
 extern L9026 outputs;
 extern L9966 l9966;
+
+// Input event system (hardware interrupt-based)
+typedef void (*InputEventCallback)(uint8_t channel, bool state);
+
+void initInputMonitoring();  // Initialize input monitoring with hardware interrupts
+void registerInputCallback(uint8_t channel, InputEventCallback callback);
+
+// FreeRTOS tasks
+void taskAccelPedalMonitor(void *pvParameters);
 
 // Relay control functions
 void setEFIMainRelay1(bool state);
