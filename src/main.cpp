@@ -3,6 +3,7 @@
 #include "SPI.h"
 #include "common.h"
 #include "main.h"
+#include "serial_console.h"
 
 #define Serial SerialUSB
 
@@ -565,7 +566,17 @@ void setup() {
     NULL                    // Task handle
   );
 
-  Serial.println("FreeRTOS task created!");
+  // Serial console task - Priority 1 (low priority, user interface)
+  xTaskCreate(
+    taskSerialConsole,      // Task function
+    "SerialConsole",        // Task name
+    4096,                   // Stack size (bytes) - larger for string processing
+    NULL,                   // Parameters
+    1,                      // Priority (low for user interface)
+    NULL                    // Task handle
+  );
+
+  Serial.println("FreeRTOS tasks created!");
   Serial.println("Starting scheduler...");
 
   // Start FreeRTOS scheduler

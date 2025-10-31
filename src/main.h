@@ -72,6 +72,7 @@ void taskAccelPedalMonitor(void *pvParameters);
 void taskM3CanMonitor(void *pvParameters);
 void taskHVCanMonitor(void *pvParameters);
 void taskBRZCanMonitor(void *pvParameters);
+void taskSerialConsole(void *pvParameters);
 
 // Relay control functions
 void setEFIMainRelay1(bool state);
