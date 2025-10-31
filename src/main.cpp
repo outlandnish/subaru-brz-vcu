@@ -22,9 +22,12 @@
 
 SPIClass spi(IO_COPI, IO_CIPO, IO_SCK, NC);
 L9966 l9966(&spi, INPUT_CS, INPUT_INTERRUPT, INPUT_RESET, false, takeSPI, releaseSPI);
+CANBus m3_can(M3_CAN_RX, M3_CAN_TX, M3_CAN_TERMINATION_ENABLE);
+CANBus hv_can(HV_CAN_RX, HV_CAN_TX, HV_CAN_TERMINATION_ENABLE);
+CANBus brz_can(BRZ_CAN_RX, BRZ_CAN_TX, BRZ_CAN_TERMINATION_ENABLE);
 
 L9026Device outputDevices[] = {
-  L9026Device(0, SSHUT_ENABLE, NC, OUTPUT_STANDBY),
+  L9026Device(0, SSHUT_ENABLE, SSHUT_ENABLE, OUTPUT_STANDBY),
   L9026Device(1, NC, NC, OUTPUT_STANDBY),
 };
 
@@ -310,6 +313,13 @@ void setup() {
   delay(5000);
   Serial.println("Starting...");
 
+  Serial.println("Setup M3 CAN");
+  m3_can.begin(500000);  // 500 kbps
+  Serial.println("Setup HV CAN");
+  hv_can.begin(500000);  // 500 kbps
+  Serial.println("Setup BRZ CAN");
+  brz_can.begin(500000); // 500 kbps
+
   Serial.println("Setup L9026 output drivers");
   // setup L9026 output drivers
   if (!outputs.begin()) {
@@ -564,6 +574,63 @@ void setup() {
   // Should never reach here
   Serial.println("ERROR: Scheduler failed to start!");
   while(1);
+}
+
+void taskM3CanMonitor(void *pvParameters) {
+  (void) pvParameters;
+
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+  const TickType_t xFrequency = pdMS_TO_TICKS(100);  // Run every 100ms
+
+  // Monitor M3 CAN bus
+  uint32_t id;
+  uint8_t data[8];
+  uint8_t len;
+  for (;;) {
+    if (m3_can.receiveMessage(id, data, len)) {
+      // Process received message
+    }
+
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+  }
+}
+
+void taskHVCanMonitor(void *pvParameters) {
+  (void) pvParameters;
+
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+  const TickType_t xFrequency = pdMS_TO_TICKS(100);  // Run every 100ms
+
+  // Monitor HV CAN bus
+  uint32_t id;
+  uint8_t data[8];
+  uint8_t len;
+  for (;;) {
+    if (hv_can.receiveMessage(id, data, len)) {
+      // Process received message
+    }
+
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+  }
+}
+
+void taskBRZCanMonitor(void *pvParameters) {
+  (void) pvParameters;
+
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+  const TickType_t xFrequency = pdMS_TO_TICKS(100);  // Run every 100ms
+
+  // Monitor BRZ CAN bus
+  uint32_t id;
+  uint8_t data[8];
+  uint8_t len;
+  for (;;) {
+    if (brz_can.receiveMessage(id, data, len)) {
+      // Process received message
+    }
+
+    vTaskDelayUntil(&xLastWakeTime, xFrequency);
+  }
 }
 
 void loop() {

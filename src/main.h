@@ -3,6 +3,7 @@
 #include "Arduino.h"
 #include "l9026.h"
 #include "l9966.h"
+#include "hal/can/can.h"
 
 // Relay output definitions
 // Device 0 outputs
@@ -68,6 +69,9 @@ void registerInputCallback(uint8_t channel, InputEventCallback callback);
 
 // FreeRTOS tasks
 void taskAccelPedalMonitor(void *pvParameters);
+void taskM3CanMonitor(void *pvParameters);
+void taskHVCanMonitor(void *pvParameters);
+void taskBRZCanMonitor(void *pvParameters);
 
 // Relay control functions
 void setEFIMainRelay1(bool state);
@@ -112,3 +116,4 @@ float getOilTemp();  // Returns temperature in Celsius
 // Raw ADC reading functions
 uint16_t readInputVoltage(uint8_t channel);  // Returns raw ADC value for voltage mode
 uint16_t readInputResistance(uint8_t channel);  // Returns raw ADC value for resistance mode
+
