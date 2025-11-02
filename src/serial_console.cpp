@@ -13,6 +13,7 @@ void handleHelpCommand() {
   Serial.println("\n=== VCU Serial Console ===");
   Serial.println("\nAvailable Commands:");
   Serial.println("  help              - Show this help message");
+  Serial.println("  devstatus         - Show device initialization status");
   Serial.println("  status            - Show system status");
   Serial.println("  inputs            - Read all L9966 inputs");
   Serial.println("  input <ch>        - Read specific input channel (1-15)");
@@ -33,38 +34,72 @@ void handleStatusCommand() {
 
   // L9966 Status
   Serial.println("\n--- L9966 Input Driver ---");
-  L9966_GSR gsr = l9966.getGeneralStatus();
-  Serial.printf("Configuration Reset: %s\n", gsr.configuration_reset ? "YES" : "NO");
-  Serial.printf("Using Calibrated ADC: %s\n", gsr.using_calibrated_adc ? "YES" : "NO");
-  Serial.printf("Voltage Supply Fault: %s\n", gsr.voltage_supply_fault ? "YES" : "NO");
-  Serial.printf("Over Temperature: %s\n", gsr.over_temperature_fault ? "YES" : "NO");
+  if (l9966_initialized) {
+    L9966_GSR gsr = l9966.getGeneralStatus();
+    Serial.printf("Configuration Reset: %s\n", gsr.configuration_reset ? "YES" : "NO");
+    Serial.printf("Using Calibrated ADC: %s\n", gsr.using_calibrated_adc ? "YES" : "NO");
+    Serial.printf("Voltage Supply Fault: %s\n", gsr.voltage_supply_fault ? "YES" : "NO");
+    Serial.printf("Over Temperature: %s\n", gsr.over_temperature_fault ? "YES" : "NO");
 
-  L9966_DeviceInfo info = l9966.getDeviceInfo();
-  Serial.printf("Device Version: 0x%02X\n", info.device_version);
-  Serial.printf("Hardware Revision: 0x%02X\n", info.hardware_revision);
-  Serial.printf("Device ID: 0x%02X\n", info.device_id);
+    L9966_DeviceInfo info = l9966.getDeviceInfo();
+    Serial.printf("Device Version: 0x%02X\n", info.device_version);
+    Serial.printf("Hardware Revision: 0x%02X\n", info.hardware_revision);
+    Serial.printf("Device ID: 0x%02X\n", info.device_id);
+  } else {
+    Serial.println("Device NOT INITIALIZED - cannot read status");
+  }
 
   // L9026 Status
   Serial.println("\n--- L9026 Output Drivers ---");
-  for (uint8_t dev = 0; dev < outputs.getDeviceCount(); dev++) {
-    L9026DeviceStatus status = outputs.getDeviceStatus(dev);
-    Serial.printf("\nDevice %d:\n", dev);
-    Serial.printf("  Operating Mode: ");
-    switch (status.operating_mode) {
-      case L9026_SLEEP_MODE: Serial.println("SLEEP"); break;
-      case L9026_LIMP_HOME_MODE: Serial.println("LIMP HOME"); break;
-      case L9026_IDLE_MODE: Serial.println("IDLE"); break;
-      case L9026_ACTIVE_MODE: Serial.println("ACTIVE"); break;
+  if (l9026_initialized) {
+    for (uint8_t dev = 0; dev < outputs.getDeviceCount(); dev++) {
+      L9026DeviceStatus status = outputs.getDeviceStatus(dev);
+      Serial.printf("\nDevice %d:\n", dev);
+      Serial.printf("  Operating Mode: ");
+      switch (status.operating_mode) {
+        case L9026_SLEEP_MODE: Serial.println("SLEEP"); break;
+        case L9026_LIMP_HOME_MODE: Serial.println("LIMP HOME"); break;
+        case L9026_IDLE_MODE: Serial.println("IDLE"); break;
+        case L9026_ACTIVE_MODE: Serial.println("ACTIVE"); break;
+      }
+      Serial.printf("  Disable Status: %s\n", status.disable_status ? "DISABLED" : "ENABLED");
+      Serial.printf("  Idle Status: %s\n", status.idle_status ? "IDLE" : "ACTIVE");
+      Serial.printf("  Power-On Reset: %s\n", status.power_on_reset_condition_detected ? "DETECTED" : "OK");
+      Serial.printf("  Overcurrent/Overtemp: %s\n", status.overcurrent_overtemperature_detected ? "FAULT" : "OK");
+      Serial.printf("  Off-State Diagnostic Failure: %s\n", status.off_state_diagnostic_failure_detected ? "FAULT" : "OK");
+      Serial.printf("  VDDIO Undervoltage: %s\n", status.vddio_undervoltage_detected ? "FAULT" : "OK");
+      Serial.printf("  VBATT Undervoltage: %s\n", status.vbatt_undervoltage_detected ? "FAULT" : "OK");
     }
-    Serial.printf("  Disable Status: %s\n", status.disable_status ? "DISABLED" : "ENABLED");
-    Serial.printf("  Idle Status: %s\n", status.idle_status ? "IDLE" : "ACTIVE");
-    Serial.printf("  Power-On Reset: %s\n", status.power_on_reset_condition_detected ? "DETECTED" : "OK");
-    Serial.printf("  Overcurrent/Overtemp: %s\n", status.overcurrent_overtemperature_detected ? "FAULT" : "OK");
-    Serial.printf("  Off-State Diagnostic Failure: %s\n", status.off_state_diagnostic_failure_detected ? "FAULT" : "OK");
-    Serial.printf("  VDDIO Undervoltage: %s\n", status.vddio_undervoltage_detected ? "FAULT" : "OK");
-    Serial.printf("  VBATT Undervoltage: %s\n", status.vbatt_undervoltage_detected ? "FAULT" : "OK");
+  } else {
+    Serial.println("Device NOT INITIALIZED - cannot read status");
   }
   Serial.println();
+}
+
+void handleDeviceStatusCommand() {
+  Serial.println("\n=== Device Initialization Status ===\n");
+
+  Serial.print("L9026 Output Driver: ");
+  if (l9026_initialized) {
+    Serial.println("INITIALIZED");
+  } else {
+    Serial.println("FAILED");
+  }
+
+  Serial.print("L9966 Input Driver:  ");
+  if (l9966_initialized) {
+    Serial.println("INITIALIZED");
+  } else {
+    Serial.println("FAILED");
+  }
+
+  Serial.println();
+
+  if (!l9026_initialized || !l9966_initialized) {
+    Serial.println("WARNING: Some devices failed to initialize!");
+    Serial.println("Output control and/or input reading may not function correctly.");
+    Serial.println();
+  }
 }
 
 void printInputStatus(uint8_t channel) {
@@ -145,6 +180,12 @@ void printInputStatus(uint8_t channel) {
 void handleReadAllInputsCommand() {
   Serial.println("\n=== L9966 Input Status ===\n");
 
+  if (!l9966_initialized) {
+    Serial.println("ERROR: L9966 not initialized - cannot read inputs");
+    Serial.println();
+    return;
+  }
+
   // Read digital input status once
   L9966_DigitalInputStatus status = l9966.getDigitalInputStatus();
 
@@ -171,6 +212,11 @@ void handleReadAllInputsCommand() {
 }
 
 void handleReadInputCommand(const char* args) {
+  if (!l9966_initialized) {
+    Serial.println("ERROR: L9966 not initialized - cannot read inputs");
+    return;
+  }
+
   if (args == nullptr || strlen(args) == 0) {
     Serial.println("ERROR: Missing channel number. Usage: input <channel>");
     return;
@@ -193,6 +239,11 @@ void handleReadInputCommand(const char* args) {
 }
 
 void handleMonitorInputsCommand() {
+  if (!l9966_initialized) {
+    Serial.println("ERROR: L9966 not initialized - cannot read inputs");
+    return;
+  }
+
   Serial.println("\n=== Monitoring Inputs (press any key to stop) ===\n");
   Serial.println("Digital Inputs:");
   Serial.println("  Clutch | AC_Press | DLC_Diag | Brake_NC | Brake_NO | Brake");
@@ -271,6 +322,11 @@ void handleReadAllOutputsCommand() {
 }
 
 void handleSetOutputCommand(const char* args) {
+  if (!l9026_initialized) {
+    Serial.println("ERROR: L9026 not initialized - cannot control outputs");
+    return;
+  }
+
   if (args == nullptr || strlen(args) == 0) {
     Serial.println("ERROR: Missing arguments. Usage: output <device> <channel> <state>");
     Serial.println("  device: 0-1, channel: 0-7, state: 0/1");
@@ -327,6 +383,11 @@ void handleSetOutputCommand(const char* args) {
 }
 
 void handleRelayCommand(const char* args) {
+  if (!l9026_initialized) {
+    Serial.println("ERROR: L9026 not initialized - cannot control relays");
+    return;
+  }
+
   if (args == nullptr || strlen(args) == 0) {
     Serial.println("ERROR: Missing arguments. Usage: relay <name> <state>");
     Serial.println("  Available relays: efi1, efi23, starter, acc, etcs, stcut,");
@@ -405,6 +466,12 @@ void handleRelayCommand(const char* args) {
 void handleDiagnosticsCommand() {
   Serial.println("\n=== L9026 Diagnostics ===");
 
+  if (!l9026_initialized) {
+    Serial.println("ERROR: L9026 not initialized - cannot read diagnostics");
+    Serial.println();
+    return;
+  }
+
   // Read diagnostics from all devices
   outputs.readAllDeviceOffModeDiagnostics();
 
@@ -446,6 +513,11 @@ void handleDiagnosticsCommand() {
 }
 
 void handleTestSequenceCommand() {
+  if (!l9026_initialized) {
+    Serial.println("ERROR: L9026 not initialized - cannot run test sequence");
+    return;
+  }
+
   Serial.println("\n=== Running Output Test Sequence ===");
   Serial.println("Testing each relay for 1 second...\n");
 
@@ -501,6 +573,8 @@ void parseCommand(const char* command) {
   // Handle commands
   if (strcmp(cmd_name, "help") == 0) {
     handleHelpCommand();
+  } else if (strcmp(cmd_name, "devstatus") == 0) {
+    handleDeviceStatusCommand();
   } else if (strcmp(cmd_name, "status") == 0) {
     handleStatusCommand();
   } else if (strcmp(cmd_name, "inputs") == 0) {
@@ -528,7 +602,7 @@ void taskSerialConsole(void *pvParameters) {
   (void) pvParameters;
 
   // Wait a bit for system to stabilize
-  vTaskDelay(pdMS_TO_TICKS(2000));
+  delay(2000);
 
   Serial.println("\n\n=== VCU Serial Console Ready ===");
   Serial.println("Type 'help' for available commands");
@@ -569,6 +643,6 @@ void taskSerialConsole(void *pvParameters) {
     }
 
     // Small delay to prevent hogging CPU
-    vTaskDelay(pdMS_TO_TICKS(10));
+    delay(10);
   }
 }

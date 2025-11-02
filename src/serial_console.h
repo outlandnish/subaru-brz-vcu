@@ -9,6 +9,7 @@ void taskSerialConsole(void *pvParameters);
 // Command handlers
 void handleHelpCommand();
 void handleStatusCommand();
+void handleDeviceStatusCommand();
 void handleReadAllInputsCommand();
 void handleReadInputCommand(const char* args);
 void handleReadAllOutputsCommand();

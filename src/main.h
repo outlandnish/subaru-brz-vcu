@@ -61,6 +61,10 @@
 extern L9026 outputs;
 extern L9966 l9966;
 
+// Device initialization status flags
+extern bool l9026_initialized;
+extern bool l9966_initialized;
+
 // Input event system (hardware interrupt-based)
 typedef void (*InputEventCallback)(uint8_t channel, bool state);
 

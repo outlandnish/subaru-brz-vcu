@@ -27,6 +27,10 @@ CANBus m3_can(M3_CAN_RX, M3_CAN_TX, M3_CAN_TERMINATION_ENABLE);
 CANBus hv_can(HV_CAN_RX, HV_CAN_TX, HV_CAN_TERMINATION_ENABLE);
 CANBus brz_can(BRZ_CAN_RX, BRZ_CAN_TX, BRZ_CAN_TERMINATION_ENABLE);
 
+// Device initialization status flags
+bool l9026_initialized = false;
+bool l9966_initialized = false;
+
 L9026Device outputDevices[] = {
   L9026Device(0, SSHUT_ENABLE, SSHUT_ENABLE, OUTPUT_STANDBY),
   L9026Device(1, NC, NC, OUTPUT_STANDBY),
@@ -96,6 +100,9 @@ void setAllFanRelays(bool state) {
 
 // Input reading function implementations
 uint16_t readInputVoltage(uint8_t channel) {
+  if (!l9966_initialized) {
+    return 0;  // Return 0 if device not initialized
+  }
   l9966.startSingleConversion(static_cast<L9966_ADCChannel>(channel), true, L9966_PullupDivider::NO_PULLUP_5V);
   delay(10);  // Wait for conversion to complete
   L9966_ADCResult result = l9966.getSingleConversionResult();
@@ -103,6 +110,9 @@ uint16_t readInputVoltage(uint8_t channel) {
 }
 
 uint16_t readInputResistance(uint8_t channel) {
+  if (!l9966_initialized) {
+    return 0;  // Return 0 if device not initialized
+  }
   l9966.startSingleConversion(static_cast<L9966_ADCChannel>(channel), false, L9966_PullupDivider::NO_PULLUP_5V);
   delay(10);  // Wait for conversion to complete
   L9966_ADCResult result = l9966.getSingleConversionResult();
@@ -111,26 +121,41 @@ uint16_t readInputResistance(uint8_t channel) {
 
 // Digital input functions
 bool getCruiseControlState() {
+  if (!l9966_initialized) {
+    return false;  // Return false if device not initialized
+  }
   L9966_DigitalInputStatus status = l9966.getDigitalInputStatus();
   return (status.channel_states >> (INPUT_CRUISE_CONTROL - 1)) & 0x01;
 }
 
 bool getClutchSwitchState() {
+  if (!l9966_initialized) {
+    return false;  // Return false if device not initialized
+  }
   L9966_DigitalInputStatus status = l9966.getDigitalInputStatus();
   return (status.channel_states >> (INPUT_CLUTCH_SWITCH - 1)) & 0x01;
 }
 
 bool getACPressureSwitchState() {
+  if (!l9966_initialized) {
+    return false;  // Return false if device not initialized
+  }
   L9966_DigitalInputStatus status = l9966.getDigitalInputStatus();
   return (status.channel_states >> (INPUT_AC_PRESSURE_SWITCH - 1)) & 0x01;
 }
 
 bool getDLCDiagnosticState() {
+  if (!l9966_initialized) {
+    return false;  // Return false if device not initialized
+  }
   L9966_DigitalInputStatus status = l9966.getDigitalInputStatus();
   return (status.channel_states >> (INPUT_DLC_DIAGNOSTIC - 1)) & 0x01;
 }
 
 bool getBrakeSwitchState() {
+  if (!l9966_initialized) {
+    return false;  // Return false if device not initialized
+  }
   L9966_DigitalInputStatus status = l9966.getDigitalInputStatus();
   bool nc_state = (status.channel_states >> (INPUT_BRAKE_SWITCH_NC - 1)) & 0x01;
   bool no_state = (status.channel_states >> (INPUT_BRAKE_SWITCH_NO - 1)) & 0x01;
@@ -253,6 +278,12 @@ void taskAccelPedalMonitor(void *pvParameters) {
   const TickType_t xFrequency = pdMS_TO_TICKS(20);  // Run every 20ms (50Hz)
 
   for (;;) {
+    // Skip reading if L9966 not initialized
+    if (!l9966_initialized) {
+      vTaskDelayUntil(&xLastWakeTime, xFrequency);
+      continue;
+    }
+
     // Read accelerator pedal position
     AccelPedalReading pedal = getAccelPedalPosition();
 
@@ -324,14 +355,15 @@ void setup() {
   Serial.println("Setup L9026 output drivers");
   // setup L9026 output drivers
   if (!outputs.begin()) {
-    Serial.println("Failed to initialize L9026 output drivers");
-    while (1);
+    Serial.println("ERROR: Failed to initialize L9026 output drivers");
+    l9026_initialized = false;
+  } else {
+    Serial.println("L9026 output drivers initialized - resetting devices");
+    outputs.softReset();
+    l9026_initialized = true;
   }
 
-  Serial.println("L9026 output drivers initialized - resetting devices");
-  outputs.softReset();
-
-  // configure L9026 output drivers
+  // configure L9026 output drivers (only if initialized successfully)
   /*
   Driver 0:
     SSHUT_ENABLE controls both IN0 and IN1 -> Channel 2 / 3 as low side outputs (tied together for SSHUT though probably not necessary for next iteration)
@@ -354,204 +386,219 @@ void setup() {
     Channel 7 -> Low side output (LS0)
   */
 
-  Serial.println("Configuring L9026 output drivers");
+  if (l9026_initialized) {
+    Serial.println("Configuring L9026 output drivers");
 
-  // Device 0 Configuration
-  // Channels 0-1 are HIGH_SIDE by default (HS0, HS1)
-  // Configure channels 2-7 as LOW_SIDE outputs
-  outputs.configureOutputSide(0, OutputChannel::CHANNEL_2, OutputType::LOW_SIDE);  // EFI Main Relay #1 (SSHUT)
-  outputs.configureOutputSide(0, OutputChannel::CHANNEL_3, OutputType::LOW_SIDE);  // EFI Main Relay #2,#3 (SSHUT)
-  outputs.configureOutputSide(0, OutputChannel::CHANNEL_4, OutputType::LOW_SIDE);  // ST Starter Relay (STA)
-  outputs.configureOutputSide(0, OutputChannel::CHANNEL_5, OutputType::LOW_SIDE);  // Accessory Current Cutoff Request (ACCR)
-  outputs.configureOutputSide(0, OutputChannel::CHANNEL_6, OutputType::LOW_SIDE);  // ETCS Relay (MCR)
-  outputs.configureOutputSide(0, OutputChannel::CHANNEL_7, OutputType::LOW_SIDE);  // ST Cut Relay NC (STAR)
+    // Device 0 Configuration
+    // Channels 0-1 are HIGH_SIDE by default (HS0, HS1)
+    // Configure channels 2-7 as LOW_SIDE outputs
+    outputs.configureOutputSide(0, OutputChannel::CHANNEL_2, OutputType::LOW_SIDE);  // EFI Main Relay #1 (SSHUT)
+    outputs.configureOutputSide(0, OutputChannel::CHANNEL_3, OutputType::LOW_SIDE);  // EFI Main Relay #2,#3 (SSHUT)
+    outputs.configureOutputSide(0, OutputChannel::CHANNEL_4, OutputType::LOW_SIDE);  // ST Starter Relay (STA)
+    outputs.configureOutputSide(0, OutputChannel::CHANNEL_5, OutputType::LOW_SIDE);  // Accessory Current Cutoff Request (ACCR)
+    outputs.configureOutputSide(0, OutputChannel::CHANNEL_6, OutputType::LOW_SIDE);  // ETCS Relay (MCR)
+    outputs.configureOutputSide(0, OutputChannel::CHANNEL_7, OutputType::LOW_SIDE);  // ST Cut Relay NC (STAR)
 
-  // Device 1 Configuration
-  // Channels 0-1 are HIGH_SIDE by default (HS2, HS3)
-  // Configure channels 2-7 as LOW_SIDE outputs
-  outputs.configureOutputSide(1, OutputChannel::CHANNEL_2, OutputType::LOW_SIDE);  // Fan #3 Relay (FAN1)
-  outputs.configureOutputSide(1, OutputChannel::CHANNEL_3, OutputType::LOW_SIDE);  // Fan #1,#2 Relay (FAN2)
-  outputs.configureOutputSide(1, OutputChannel::CHANNEL_4, OutputType::LOW_SIDE);  // AC Compressor/Heater Relay (AC)
-  outputs.configureOutputSide(1, OutputChannel::CHANNEL_5, OutputType::LOW_SIDE);  // Blower Motor Relay (HB)
-  outputs.configureOutputSide(1, OutputChannel::CHANNEL_6, OutputType::LOW_SIDE);  // Injector Relay (IREL)
-  outputs.configureOutputSide(1, OutputChannel::CHANNEL_7, OutputType::LOW_SIDE);  // Low side output (LS0)
+    // Device 1 Configuration
+    // Channels 0-1 are HIGH_SIDE by default (HS2, HS3)
+    // Configure channels 2-7 as LOW_SIDE outputs
+    outputs.configureOutputSide(1, OutputChannel::CHANNEL_2, OutputType::LOW_SIDE);  // Fan #3 Relay (FAN1)
+    outputs.configureOutputSide(1, OutputChannel::CHANNEL_3, OutputType::LOW_SIDE);  // Fan #1,#2 Relay (FAN2)
+    outputs.configureOutputSide(1, OutputChannel::CHANNEL_4, OutputType::LOW_SIDE);  // AC Compressor/Heater Relay (AC)
+    outputs.configureOutputSide(1, OutputChannel::CHANNEL_5, OutputType::LOW_SIDE);  // Blower Motor Relay (HB)
+    outputs.configureOutputSide(1, OutputChannel::CHANNEL_6, OutputType::LOW_SIDE);  // Injector Relay (IREL)
+    outputs.configureOutputSide(1, OutputChannel::CHANNEL_7, OutputType::LOW_SIDE);  // Low side output (LS0)
 
-  // Map SSHUT_ENABLE to control EFI Main Relays on Device 0
-  Serial.println("Mapping inputs to output channels");
-  outputs.mapInput(0, L9026PWMInput::IN0, OutputChannel::CHANNEL_2);  // EFI Main Relay #1
-  outputs.mapInput(0, L9026PWMInput::IN1, OutputChannel::CHANNEL_3);  // EFI Main Relay #2,#3
+    // Map SSHUT_ENABLE to control EFI Main Relays on Device 0
+    Serial.println("Mapping inputs to output channels");
+    outputs.mapInput(0, L9026PWMInput::IN0, OutputChannel::CHANNEL_2);  // EFI Main Relay #1
+    outputs.mapInput(0, L9026PWMInput::IN1, OutputChannel::CHANNEL_3);  // EFI Main Relay #2,#3
 
-  // Enable active mode for both devices
-  Serial.println("Setting active mode for all devices");
-  outputs.setActiveMode(0, true);
-  outputs.setActiveMode(1, true);
+    // Enable active mode for both devices
+    Serial.println("Setting active mode for all devices");
+    outputs.setActiveMode(0, true);
+    outputs.setActiveMode(1, true);
 
-  // Update configuration
-  outputs.updateConfiguration();
+    // Update configuration
+    outputs.updateConfiguration();
 
-  // read status of all devices
-  Serial.println("Reading status of all devices");
-  outputs.readAllDeviceStatus();
+    // read status of all devices
+    Serial.println("Reading status of all devices");
+    outputs.readAllDeviceStatus();
 
-  // debug print device status for each device
-  for (uint i = 0; i < outputs.getDeviceCount(); i++) {
-    auto status = outputs.getDeviceStatus(i);
-    Serial.printf("Device %d Disable Status: %d\n", i, status.disable_status);
-    Serial.printf("Device %d Idle Status: %d\n", i, status.idle_status);
-    Serial.printf("Device %d IN1 Status: %d\n", i, status.in1_status);
-    Serial.printf("Device %d IN0 Status: %d\n", i, status.in0_status);
-    Serial.printf("Device %d Power On Reset Condition Detected: %d\n", i, status.power_on_reset_condition_detected);
-    Serial.printf("Device %d Overcurrent/Overtemperature Detected: %d\n", i, status.overcurrent_overtemperature_detected);
-    Serial.printf("Device %d Off State Diagnostic Failure Detected: %d\n", i, status.off_state_diagnostic_failure_detected);
-    Serial.printf("Device %d Operating Mode: %d\n", i, status.operating_mode);
-  }
-
-  // run off mode diagnostics
-  Serial.println("Running off mode diagnostics");
-  outputs.readAllDeviceOffModeDiagnostics();
-
-  // debug print diagnostics for each device
-  for (uint8_t i = 0; i < outputs.getDeviceCount(); i++) {
-    for (uint8_t j = 2; j < 8; j++) {
-      auto diagnostics = outputs.getChannelDiagnostics(i, (OutputChannel)j);
-      Serial.printf("Device %d Channel %d Off State Open Load Detected: %d\n", i, j, diagnostics.off_state_open_load_detected);
-      Serial.printf("Device %d Channel %d Shorted Load Detected: %d\n", i, j, diagnostics.shorted_load_detected);
+    // debug print device status for each device
+    for (uint i = 0; i < outputs.getDeviceCount(); i++) {
+      auto status = outputs.getDeviceStatus(i);
+      Serial.printf("Device %d Disable Status: %d\n", i, status.disable_status);
+      Serial.printf("Device %d Idle Status: %d\n", i, status.idle_status);
+      Serial.printf("Device %d IN1 Status: %d\n", i, status.in1_status);
+      Serial.printf("Device %d IN0 Status: %d\n", i, status.in0_status);
+      Serial.printf("Device %d Power On Reset Condition Detected: %d\n", i, status.power_on_reset_condition_detected);
+      Serial.printf("Device %d Overcurrent/Overtemperature Detected: %d\n", i, status.overcurrent_overtemperature_detected);
+      Serial.printf("Device %d Off State Diagnostic Failure Detected: %d\n", i, status.off_state_diagnostic_failure_detected);
+      Serial.printf("Device %d Operating Mode: %d\n", i, status.operating_mode);
     }
+
+    // run off mode diagnostics
+    Serial.println("Running off mode diagnostics");
+    outputs.readAllDeviceOffModeDiagnostics();
+
+    // debug print diagnostics for each device
+    for (uint8_t i = 0; i < outputs.getDeviceCount(); i++) {
+      for (uint8_t j = 2; j < 8; j++) {
+        auto diagnostics = outputs.getChannelDiagnostics(i, (OutputChannel)j);
+        Serial.printf("Device %d Channel %d Off State Open Load Detected: %d\n", i, j, diagnostics.off_state_open_load_detected);
+        Serial.printf("Device %d Channel %d Shorted Load Detected: %d\n", i, j, diagnostics.shorted_load_detected);
+      }
+    }
+  } else {
+    Serial.println("Skipping L9026 configuration (device not initialized)");
   }
 
   // setup L9966 input driver
-  l9966.begin();
+  Serial.println("Setup L9966 input driver");
+  if (!l9966.begin()) {
+    Serial.println("ERROR: Failed to initialize L9966 input driver");
+    l9966_initialized = false;
+  } else {
+    Serial.println("L9966 input driver initialized");
+    l9966_initialized = true;
+  }
 
-  // Configure input channels
-  Serial.println("Configuring L9966 input channels...");
+  // Configure input channels (only if initialized successfully)
+  if (l9966_initialized) {
+    Serial.println("Configuring L9966 input channels...");
 
-  // IO 1: Cruise Control Switch (analog resistor array)
-  // Resistance measurement with 250µA current source
-  L9966_CurrentSourceConfig io1_config = {
-    .control_channel = 0,  // Force to 0 (always on)
-    .threshold = L9966_ComparatorThreshold::UTH1,
-    .current_value = L9966_CurrentValue::I_250uA_PU_100uA_PD,
-    .dewetting_current = L9966_DewettingCurrent::DWT_USE_CV,
-    .pull_mode = L9966_PullMode::PULLDOWN,
-    .invert_control = false
-  };
-  l9966.setCurrentSourceConfig(1, io1_config);
+    // IO 1: Cruise Control Switch (analog resistor array)
+    // Resistance measurement with 250µA current source
+    L9966_CurrentSourceConfig io1_config = {
+      .control_channel = 0,  // Force to 0 (always on)
+      .threshold = L9966_ComparatorThreshold::UTH1,
+      .current_value = L9966_CurrentValue::I_250uA_PU_100uA_PD,
+      .dewetting_current = L9966_DewettingCurrent::DWT_USE_CV,
+      .pull_mode = L9966_PullMode::PULLDOWN,
+      .invert_control = false
+    };
+    l9966.setCurrentSourceConfig(1, io1_config);
 
-  // IO 2: VPA1 Accelerator Pedal Position (voltage input 0-5V)
-  L9966_CurrentSourceConfig io2_config = {
-    .control_channel = 0,
-    .threshold = L9966_ComparatorThreshold::UTH1,
-    .current_value = L9966_CurrentValue::I_7_5uA_PU_1uA_VVAR_600uA_PD,
-    .dewetting_current = L9966_DewettingCurrent::DWT_USE_CV,
-    .pull_mode = L9966_PullMode::HIZ,  // High impedance for voltage measurement
-    .invert_control = false
-  };
-  l9966.setCurrentSourceConfig(2, io2_config);
+    // IO 2: VPA1 Accelerator Pedal Position (voltage input 0-5V)
+    L9966_CurrentSourceConfig io2_config = {
+      .control_channel = 0,
+      .threshold = L9966_ComparatorThreshold::UTH1,
+      .current_value = L9966_CurrentValue::I_7_5uA_PU_1uA_VVAR_600uA_PD,
+      .dewetting_current = L9966_DewettingCurrent::DWT_USE_CV,
+      .pull_mode = L9966_PullMode::HIZ,  // High impedance for voltage measurement
+      .invert_control = false
+    };
+    l9966.setCurrentSourceConfig(2, io2_config);
 
-  // IO 3: VPA2 Accelerator Pedal Position Signal 2 (voltage input 0-5V)
-  L9966_CurrentSourceConfig io3_config = {
-    .control_channel = 0,
-    .threshold = L9966_ComparatorThreshold::UTH1,
-    .current_value = L9966_CurrentValue::I_7_5uA_PU_1uA_VVAR_600uA_PD,
-    .dewetting_current = L9966_DewettingCurrent::DWT_USE_CV,
-    .pull_mode = L9966_PullMode::HIZ,  // High impedance for voltage measurement
-    .invert_control = false
-  };
-  l9966.setCurrentSourceConfig(3, io3_config);
+    // IO 3: VPA2 Accelerator Pedal Position Signal 2 (voltage input 0-5V)
+    L9966_CurrentSourceConfig io3_config = {
+      .control_channel = 0,
+      .threshold = L9966_ComparatorThreshold::UTH1,
+      .current_value = L9966_CurrentValue::I_7_5uA_PU_1uA_VVAR_600uA_PD,
+      .dewetting_current = L9966_DewettingCurrent::DWT_USE_CV,
+      .pull_mode = L9966_PullMode::HIZ,  // High impedance for voltage measurement
+      .invert_control = false
+    };
+    l9966.setCurrentSourceConfig(3, io3_config);
 
-  // IO 4: Clutch Switch (digital input with pull-up)
-  L9966_CurrentSourceConfig io4_config = {
-    .control_channel = 0,
-    .threshold = L9966_ComparatorThreshold::UTH1,
-    .current_value = L9966_CurrentValue::I_20uA,
-    .dewetting_current = L9966_DewettingCurrent::DWT_USE_CV,
-    .pull_mode = L9966_PullMode::PULLUP_5V_REF,
-    .invert_control = false
-  };
-  l9966.setCurrentSourceConfig(4, io4_config);
+    // IO 4: Clutch Switch (digital input with pull-up)
+    L9966_CurrentSourceConfig io4_config = {
+      .control_channel = 0,
+      .threshold = L9966_ComparatorThreshold::UTH1,
+      .current_value = L9966_CurrentValue::I_20uA,
+      .dewetting_current = L9966_DewettingCurrent::DWT_USE_CV,
+      .pull_mode = L9966_PullMode::PULLUP_5V_REF,
+      .invert_control = false
+    };
+    l9966.setCurrentSourceConfig(4, io4_config);
 
-  // IO 5: AC Pressure Switch (digital input with pull-down)
-  L9966_CurrentSourceConfig io5_config = {
-    .control_channel = 0,
-    .threshold = L9966_ComparatorThreshold::UTH1,
-    .current_value = L9966_CurrentValue::I_20uA,
-    .dewetting_current = L9966_DewettingCurrent::DWT_USE_CV,
-    .pull_mode = L9966_PullMode::PULLDOWN,
-    .invert_control = false
-  };
-  l9966.setCurrentSourceConfig(5, io5_config);
+    // IO 5: AC Pressure Switch (digital input with pull-down)
+    L9966_CurrentSourceConfig io5_config = {
+      .control_channel = 0,
+      .threshold = L9966_ComparatorThreshold::UTH1,
+      .current_value = L9966_CurrentValue::I_20uA,
+      .dewetting_current = L9966_DewettingCurrent::DWT_USE_CV,
+      .pull_mode = L9966_PullMode::PULLDOWN,
+      .invert_control = false
+    };
+    l9966.setCurrentSourceConfig(5, io5_config);
 
-  // IO 6: Skip (misconfigured IMO line)
+    // IO 6: Skip (misconfigured IMO line)
 
-  // IO 7: DLC Diagnostic Mode (detects ground, needs pull-up)
-  L9966_CurrentSourceConfig io7_config = {
-    .control_channel = 0,
-    .threshold = L9966_ComparatorThreshold::UTH1,
-    .current_value = L9966_CurrentValue::I_20uA,
-    .dewetting_current = L9966_DewettingCurrent::DWT_USE_CV,
-    .pull_mode = L9966_PullMode::PULLUP_5V_REF,
-    .invert_control = false
-  };
-  l9966.setCurrentSourceConfig(7, io7_config);
+    // IO 7: DLC Diagnostic Mode (detects ground, needs pull-up)
+    L9966_CurrentSourceConfig io7_config = {
+      .control_channel = 0,
+      .threshold = L9966_ComparatorThreshold::UTH1,
+      .current_value = L9966_CurrentValue::I_20uA,
+      .dewetting_current = L9966_DewettingCurrent::DWT_USE_CV,
+      .pull_mode = L9966_PullMode::PULLUP_5V_REF,
+      .invert_control = false
+    };
+    l9966.setCurrentSourceConfig(7, io7_config);
 
-  // IO 8: Engine Coolant Temperature Sensor (NTC thermistor)
-  // Resistance measurement with pull-up to 5V reference
-  L9966_CurrentSourceConfig io8_config = {
-    .control_channel = 0,
-    .threshold = L9966_ComparatorThreshold::UTH1,
-    .current_value = L9966_CurrentValue::I_250uA_PU_100uA_PD,
-    .dewetting_current = L9966_DewettingCurrent::DWT_USE_CV,
-    .pull_mode = L9966_PullMode::PULLUP_5V_REF,
-    .invert_control = false
-  };
-  l9966.setCurrentSourceConfig(8, io8_config);
+    // IO 8: Engine Coolant Temperature Sensor (NTC thermistor)
+    // Resistance measurement with pull-up to 5V reference
+    L9966_CurrentSourceConfig io8_config = {
+      .control_channel = 0,
+      .threshold = L9966_ComparatorThreshold::UTH1,
+      .current_value = L9966_CurrentValue::I_250uA_PU_100uA_PD,
+      .dewetting_current = L9966_DewettingCurrent::DWT_USE_CV,
+      .pull_mode = L9966_PullMode::PULLUP_5V_REF,
+      .invert_control = false
+    };
+    l9966.setCurrentSourceConfig(8, io8_config);
 
-  // IO 9: Oil Temperature Sensor (NTC thermistor)
-  // Resistance measurement with pull-up to 5V reference
-  L9966_CurrentSourceConfig io9_config = {
-    .control_channel = 0,
-    .threshold = L9966_ComparatorThreshold::UTH1,
-    .current_value = L9966_CurrentValue::I_250uA_PU_100uA_PD,
-    .dewetting_current = L9966_DewettingCurrent::DWT_USE_CV,
-    .pull_mode = L9966_PullMode::PULLUP_5V_REF,
-    .invert_control = false
-  };
-  l9966.setCurrentSourceConfig(9, io9_config);
+    // IO 9: Oil Temperature Sensor (NTC thermistor)
+    // Resistance measurement with pull-up to 5V reference
+    L9966_CurrentSourceConfig io9_config = {
+      .control_channel = 0,
+      .threshold = L9966_ComparatorThreshold::UTH1,
+      .current_value = L9966_CurrentValue::I_250uA_PU_100uA_PD,
+      .dewetting_current = L9966_DewettingCurrent::DWT_USE_CV,
+      .pull_mode = L9966_PullMode::PULLUP_5V_REF,
+      .invert_control = false
+    };
+    l9966.setCurrentSourceConfig(9, io9_config);
 
-  // IO 10: Stop Light Switch NC (normally closed, pull-up)
-  L9966_CurrentSourceConfig io10_config = {
-    .control_channel = 0,
-    .threshold = L9966_ComparatorThreshold::UTH1,
-    .current_value = L9966_CurrentValue::I_20uA,
-    .dewetting_current = L9966_DewettingCurrent::DWT_USE_CV,
-    .pull_mode = L9966_PullMode::PULLUP_5V_REF,
-    .invert_control = false
-  };
-  l9966.setCurrentSourceConfig(10, io10_config);
+    // IO 10: Stop Light Switch NC (normally closed, pull-up)
+    L9966_CurrentSourceConfig io10_config = {
+      .control_channel = 0,
+      .threshold = L9966_ComparatorThreshold::UTH1,
+      .current_value = L9966_CurrentValue::I_20uA,
+      .dewetting_current = L9966_DewettingCurrent::DWT_USE_CV,
+      .pull_mode = L9966_PullMode::PULLUP_5V_REF,
+      .invert_control = false
+    };
+    l9966.setCurrentSourceConfig(10, io10_config);
 
-  // IO 11: Stop Light Switch NO (normally open, pull-down)
-  L9966_CurrentSourceConfig io11_config = {
-    .control_channel = 0,
-    .threshold = L9966_ComparatorThreshold::UTH1,
-    .current_value = L9966_CurrentValue::I_20uA,
-    .dewetting_current = L9966_DewettingCurrent::DWT_USE_CV,
-    .pull_mode = L9966_PullMode::PULLDOWN,
-    .invert_control = false
-  };
-  l9966.setCurrentSourceConfig(11, io11_config);
+    // IO 11: Stop Light Switch NO (normally open, pull-down)
+    L9966_CurrentSourceConfig io11_config = {
+      .control_channel = 0,
+      .threshold = L9966_ComparatorThreshold::UTH1,
+      .current_value = L9966_CurrentValue::I_20uA,
+      .dewetting_current = L9966_DewettingCurrent::DWT_USE_CV,
+      .pull_mode = L9966_PullMode::PULLDOWN,
+      .invert_control = false
+    };
+    l9966.setCurrentSourceConfig(11, io11_config);
 
-  Serial.println("L9966 input channels configured");
+    Serial.println("L9966 input channels configured");
 
-  // Register input event callbacks
-  Serial.println("Registering input event callbacks...");
-  registerInputCallback(INPUT_CLUTCH_SWITCH, onClutchChanged);
-  registerInputCallback(INPUT_BRAKE_SWITCH_NC, onBrakeChanged);
-  registerInputCallback(INPUT_BRAKE_SWITCH_NO, onBrakeChanged);
-  registerInputCallback(INPUT_DLC_DIAGNOSTIC, onDiagnosticModeChanged);
+    // Register input event callbacks
+    Serial.println("Registering input event callbacks...");
+    registerInputCallback(INPUT_CLUTCH_SWITCH, onClutchChanged);
+    registerInputCallback(INPUT_BRAKE_SWITCH_NC, onBrakeChanged);
+    registerInputCallback(INPUT_BRAKE_SWITCH_NO, onBrakeChanged);
+    registerInputCallback(INPUT_DLC_DIAGNOSTIC, onDiagnosticModeChanged);
 
-  // Initialize hardware interrupt-based input monitoring
-  Serial.println("Initializing hardware interrupts for input monitoring...");
-  initInputMonitoring();
+    // Initialize hardware interrupt-based input monitoring
+    Serial.println("Initializing hardware interrupts for input monitoring...");
+    initInputMonitoring();
+  } else {
+    Serial.println("Skipping L9966 configuration (device not initialized)");
+  }
 
   // Create FreeRTOS tasks
   Serial.println("Creating FreeRTOS tasks...");
